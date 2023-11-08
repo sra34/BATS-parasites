@@ -1,5 +1,5 @@
-## Code for processing 18S rRNA metabarcoding data (V4) from BATS 
-# Updated 6/29/2023
+## Code for processing 18S rRNA gene metabarcoding data (V4) from BATS 
+# Updated 11/8/2023
 # Sean R. Anderson
 
 # Load packages
@@ -20,6 +20,8 @@ library(mdatools)
 library(ComplexUpset)
 library(reshape)
 library(reshape2)
+library(pairwiseAdonis)
+library(magrittr)
 
 # Load 18S taxonomy file - assigned with new PR2 database release (V 5.0.1)
 taxonomy <- read_qza(file="18S-tax_new.qza")
@@ -43,9 +45,10 @@ ps <- phyloseq(tax_table(as.matrix(tax_tab)), otu_table(count_tab, taxa_are_rows
 ps_new = subset_taxa(ps, Division !="Streptophyta" |is.na(Division))
 ps_new = subset_taxa(ps_new, Division !="Rhodophyta" |is.na(Division))
 ps_new = subset_taxa(ps_new, Domain !="Bacteria" |is.na(Domain))
-ps_new <- subset_taxa(ps_new, Division!="Unassigned", Prune = T)
-ps_new <- subset_taxa(ps_new, Subdivision!="Opisthokonta_X", Prune = T)
-ps_new <- subset_taxa(ps_new, Class!="Craniata", Prune = T)
+ps_new <- subset_taxa(ps_new, Subdivision!="Opisthokonta_X"|is.na(Subdivision))
+ps_new <- subset_taxa(ps_new, Class!="Unassigned", Prune = T)
+ps_new = subset_taxa(ps_new, Class!="Craniata"|is.na(Class))
+
 ps_new = name_na_taxa(ps_new) # Adds an unassigned label to better identify lowest possible taxonomic assignment
 
 # Remove samples with <5,000 reads and unwanted depths (100 and 400 m)
@@ -55,17 +58,28 @@ ps_sub <- subset_samples(ps_sub, Nominal_Depth != "100" & Nominal_Depth != "400"
 # Remove singletons (ASVs present only once)
 ps_filt = filter_taxa(ps_sub, function (x) {sum(x) > 1}, prune=TRUE)
 
+# Rarefaction curves for 18S - Figure SI 10
+rare_18S <- ggrare(ps_filt, step = 100, plot = FALSE, parallel = FALSE, se = FALSE)
+rare_18S + theme(legend.position = "none") + theme_bw()+ theme(legend.position = "right") + 
+  facet_wrap(~Nominal_Depth, scales="free_y",nrow=4,ncol=3)
+ggsave(filename = "18S_rare.eps", plot = last_plot(), device = "eps", path = NULL, scale = 1, width = 7, height = 5, dpi = 150)
+
+# Estimate minimum, mean, and maximum 18S read counts
+ps_min <- min(sample_sums(ps_filt))
+ps_mean <- mean(sample_sums(ps_filt))
+ps_max <- max(sample_sums(ps_filt))
+
 # Rarefy to even sampling depth
 ps_rare <- rarefy_even_depth(ps_filt, sample.size = min(sample_sums(ps_filt)), rngseed = 714, replace = TRUE, trimOTUs = TRUE, verbose = TRUE)
 
 # Rename ASVs in sequential order
 taxa_names(ps_rare) <- paste0("ASV", seq(ntaxa(ps_rare)))
 
-# Export 18S ASV information - filtered, rarefied, and relabeled ASVs (used in data analysis for this study) - Dataset S3
+# Export 18S ASV information - filtered, rarefied, and relabeled ASVs (used in data analysis for this study) - Table S4
 OTU_filt = as(otu_table(ps_rare), "matrix")
 TAX_filt = as(tax_table(ps_rare), "matrix")
 merge_18S_filt <- cbind(OTU_filt,TAX_filt)
-write.csv(merge_18S_filt, file="Table_S3.csv", row.names=T)
+write.csv(merge_18S_filt, file="Table_S4.csv", row.names=T)
 
 # Plot relative abundance of 18S groups with depth at BATS 
 dataset <- phyloseq2meco(ps_rare) # Convert to microeco object
@@ -73,7 +87,7 @@ dataset1 <- dataset$merge_samples(use_group = "Nominal_Depth") # Group the data 
 t1 <- trans_abund$new(dataset = dataset1, taxrank = "Class", ntaxa = 10) # Create an abundance object with the top 10 class level 18S groups
 
 # Plot 18S class level relative abundance - Figure 1A
-g1 <- t1$plot_bar(bar_type = "full", use_alluvium = FALSE, clustering = FALSE,barwidth = NULL, xtext_type_hor = TRUE, xtext_size = 12, color_values = c("#332288","#CC6677","#DDCC77","#117733","#88CCEE", "#882255", "#44AA99", "#999933","#AA4499" , "#EB7357"),others_color = "#757575",
+g1 <- t1$plot_bar(bar_type = "full", use_alluvium = FALSE, clustering = FALSE,barwidth = NULL, xtext_size = 12, color_values = c("#332288","#CC6677","#DDCC77","#117733","#88CCEE", "#882255", "#44AA99", "#999933","#AA4499" , "#EB7357"),others_color = "#757575",
                   order_x = c("1000", "800", "600", "500", "300", "250", "200","160","120","80","40","1"))
 g1 + coord_flip() + geom_col(colour = "black") + labs(x="Depth (m)",y="Relative abundance (%)")+theme(text = element_text(size = 12))
 ggsave(filename = "syn_stacked_class.eps", plot = last_plot(), device = "eps", path = NULL, scale = 1, width = 5, height = 5, dpi = 300)
@@ -85,17 +99,17 @@ dataset1 <- dataset$merge_samples(use_group = "Nominal_Depth")
 t1 <- trans_abund$new(dataset = dataset1, taxrank = "Order", ntaxa = 10) # Create an abundance object with the top 10 order level groups within Syndiniales
 
 # Plot order level Syndiniales relative abundance - Figure SI 2
-g1 <- t1$plot_bar(bar_type = "full", use_alluvium = FALSE, clustering = FALSE,barwidth = NULL, xtext_type_hor = FALSE, xtext_size = 12, color_values = c("#A5CFCC","#0E899F","#F1B6A1", "#D4A52A", "#E3E5DB", "#A83860", "#ED91BC"),others_color = "#757575",
+g1 <- t1$plot_bar(bar_type = "full", use_alluvium = FALSE, clustering = FALSE,barwidth = NULL, xtext_size = 12, color_values = c("#A5CFCC","#0E899F","#F1B6A1", "#D4A52A", "#E3E5DB", "#A83860", "#ED91BC"),others_color = "#757575",
                   order_x = c("1000", "800", "600", "500", "300", "250", "200","160","120","80","40","1"))
 g1 + coord_flip()+geom_col(colour = "black")+ labs(x="Depth (m)",y="Relative abundance (%)")+theme(text = element_text(size = 12))
 ggsave(filename = "syn_stacked_order.eps", plot = last_plot(), device = "eps", path = NULL, scale = 1, width = 4.5, height = 5, dpi = 300)
 
 # Plot family level Syndiniales relative abundance - Figure 1B
 t1 <- trans_abund$new(dataset = dataset1, taxrank = "Family", ntaxa = 10) 
-g1 <- t1$plot_bar(bar_type = "full", use_alluvium =FALSE, clustering = FALSE,barwidth = NULL, xtext_type_hor = FALSE, xtext_size = 12, color_values = c("#4477AA","#EE6677","#228833", "#CCBB44", "#66CCEE", "#AA3377", "#EE7733","#CC3311","#009988","#EE3377"),others_color = "#757575",
+g1 <- t1$plot_bar(bar_type = "full", use_alluvium =FALSE, clustering = FALSE,barwidth = NULL, xtext_size = 12, color_values = c("#4477AA","#EE6677","#228833", "#CCBB44", "#66CCEE", "#AA3377", "#EE7733","#CC3311","#009988","#EE3377"),others_color = "#757575",
                   order_x = c("1000", "800", "600", "500", "300", "250", "200","160","120","80","40","1"))
 g1 + coord_flip()+geom_col(colour = "black")+ labs(x="Depth (m)",y="Relative abundance (%)")+theme(text = element_text(size = 12))
-ggsave(filename = "syn_stacked_family.eps", plot = last_plot(), device = "eps", path = NULL, scale = 1, width = 15, height = 5, dpi = 300)
+ggsave(filename = "syn_stacked_family.eps", plot = last_plot(), device = "eps", path = NULL, scale = 1, width = 5.5, height = 5, dpi = 300)
 
 # Plot 18S stacked bar plots with depth and across seasons - Figure SI 1
 barplot <- ps_rare %>%
@@ -130,7 +144,6 @@ ggsave(filename = "18S_barplots_time.pdf", plot = last_plot(), device = "pdf", p
 # Beta diversity for all Syn samples in the dataset - Figure 1C
 ordu = ordinate(ps_Syn, "PCoA", "bray") # PCoA ordination based on Bray-Curtis
 p = plot_ordination(ps_Syn, ordu, color="Nominal_Depth")
-p$data$Season <- as.factor(p$data$Season) # Convert season to factor
 p$data$Nominal_Depth <- as.factor(p$data$Nominal_Depth) # Convert sampling depth to factor
 mycolors = c(brewer.pal(name="Paired", n = 12)) # Set color palette for the plot
 p +theme_bw() + scale_fill_manual(values=mycolors) +
@@ -138,19 +151,28 @@ p +theme_bw() + scale_fill_manual(values=mycolors) +
   theme(text = element_text(size=14)) 
 ggsave(filename = "PCoA_syn.eps", plot = last_plot(), device = "eps", path = NULL, scale = 1, width = 8, height = 5, dpi = 300)
 
-# PERMANOVA to test significance of sampling depth
+# PERMANOVA to test significance of sampling depth (or season)
 metadata <- as(sample_data(ps_Syn), "data.frame")
-adonis2(phyloseq::distance(ps_Syn, method="bray") ~ Nominal_Depth, data = metadata)
+metadata$Nominal_Depth=as.factor(metadata$Nominal_Depth)
+metadata$Season=as.factor(metadata$Season)
+bray = phyloseq::distance(ps_Syn, method="bray") 
+adonis2(phyloseq::distance(ps_Syn, method="bray")~Nominal_Depth, data = metadata,perm=9999)
+pairwise.adonis(as.dist(bray), as.factor(metadata$Nominal_Depth), p.adjust.m = 'bonferroni',perm = 9999) # Include in Table S1
+
+# Run dispersion tests on sampling depth (or season)
+perm.eg.betadisper <- betadisper(bray, group = metadata$Nominal_Depth, type = "centroid")
+anova(perm.eg.betadisper)
+adonis2(dist(perm.eg.betadisper$distances) ~ metadata$Nominal_Depth,perm=9999)
 
 # Beta diversity variation with depth - Figure 1D
 dataset <- phyloseq2meco(ps_Syn)
 dataset$cal_betadiv(unifrac = FALSE)
 t1 <- trans_beta$new(dataset = dataset, group = "Nominal_Depth", measure = "bray")
-t1$cal_group_distance(within_group = TRUE)
+t1$cal_group_distance(within_group = T)
 t1$cal_group_distance_diff(method = "anova") # Significance with ANOVA
-g1 <- t1$plot_group_distance(boxplot_add = "mean",color_values = NULL,xtext_keep = TRUE)
+g1 <- t1$plot_group_distance(boxplot_add = "mean",color_values = "#DDAA33",xtext_keep = TRUE)
 g1$data$Nominal_Depth <- factor(g1$data$Nominal_Depth, levels = c("1000", "800", "600", "500", "300", "250", "200","160","120","80","40","1"))
-g1  + geom_boxplot(fill="#DDAA33")+scale_x_discrete(limits = c("1000", "800", "600", "500", "300", "250", "200","160","120","80","40","1"))+
+g1 + geom_boxplot(fill="#DDAA33")+scale_x_discrete(limits = c("1000", "800", "600", "500", "300", "250", "200","160","120","80","40","1"))+
   theme(axis.text.x=element_text(angle=45,vjust =1, hjust=1, size=12)) +coord_flip()
 ggsave(filename = "Bray_Syn.eps", plot = last_plot(), device = "eps", path = NULL, scale = 1, width = 4, height = 5, dpi = 300)
 
@@ -187,7 +209,7 @@ myData = na.omit(abund_18S) # Remove missing variables
 factors = myData[, c(1,4:17)] # Split environmental variables
 factors$Sample <- NULL # Remove sample column
 abund_split = myData[, c(2,18)] # Split Syndiniales read counts
-abund_final = abund_split[, c(2)]
+abund_final = abund_split[, c(2)] # Get rid of the first column
 
 # Run PLSR with Syndiniales read counts
 m1 = pls(factors, abund_final,7, scale = TRUE,center = TRUE, cv = 1, ncomp.selcrit = "min") # Run the core pls function
@@ -326,8 +348,8 @@ se.800 <- spiec.easi(otu.800, method ='mb', nlambda = 40, lambda.min.ratio=1e-2,
 se.1000 <- spiec.easi(otu.1000, method ='mb', nlambda = 40, lambda.min.ratio=1e-2, pulsar.params=list(rep.num=100, thresh=0.05)) 
 
 # Function to get weights and edge data into correct format for exporting. Re-run this function for each network output above. 
-convertSEToTable <- function(se,sp.names){ # Run this function to get the edge weights
-  sebeta <- symBeta(getOptBeta(se), mode='maxabs') 
+convertSEToTable <- function(se.1000,sp.names){ # Run this function to get the edge weights
+  sebeta <- symBeta(getOptBeta(se.1000), mode='maxabs') 
   elist     <- summary(sebeta)
   elist[,1] <- sp.names[elist[,1]]
   elist[,2] <- sp.names[elist[,2]]
@@ -341,7 +363,7 @@ convertSEToTable <- function(se,sp.names){ # Run this function to get the edge w
   return(as.data.frame(full_e,stringsAsFactors=F))
 }
 
-tab.se <- convertSEToTable(se, sp.names=colnames(surface.otu)) 
+tab.se <- convertSEToTable(se.1000, sp.names=colnames(otu.1000)) 
 tab.se.filtered <- tab.se %>% filter(is.finite(Weight))
 
 # Remove values that are 0 for each network
@@ -499,11 +521,6 @@ sign <- df_syn[c("Sign")] # Subset correlation sign
 edge <- df_syn[c("Edge")] # Subset edge
 network <- df_syn[c("Network")] # Subset depth network
 
-for (i in 1:nrow(df_class ))
-{
-  df_class [i, ] = sort(df_class [i, ])
-}
-
 df_merge = cbind(df_class,edge, sign, network) # Merge pairings, sign, and depth 
 df <- as.data.frame(table(df_merge[c(3:5)])) # Subset desired columns
 df = df[with(df, order(-Freq)), ] # Estimate the frequency of each type of class level pairing (positive and negative) ordered from largest to smallest
@@ -517,9 +534,10 @@ p$data$Network <- factor(p$data$Network, levels = c( "1","40","80","120", "160",
 p$data$Edge <- factor(p$data$Edge, levels =c("Syndiniales-Arthropoda","Syndiniales-Dinophyceae","Syndiniales-Polycystinea","Syndiniales-Acantharea", "Syndiniales-RAD-A","Syndiniales-RAD-B"))
 p + theme_bw() + theme(text = element_text(size=14)) + ylab("# of Network Edges") + xlab("Depth (m)") +theme(legend.position="right")+ 
   scale_color_manual(values=c("#117733", "#CC6677","#DDCC77","#88CCEE","#999933","#882255"))+ 
-  geom_point(show.legend = F,size=3)+ geom_line(lwd=1)+ geom_vline(xintercept="140", linetype=2, colour="black")+
+   geom_point(show.legend = F,size=3)+ geom_line(lwd=1)+ 
   scale_linetype_manual(values = c(Pos = "solid", Neg = "dashed")) +
-  theme(axis.text.x=element_text(angle=45, hjust=1, color="black"))+coord_flip() +ylim(0,40) + facet_wrap(~Edge)+ theme(legend.key.size = unit(1, 'cm'))
+  theme(axis.text.x=element_text(angle=45, hjust=1, color="black"))+coord_flip() +ylim(0,40) +
+  facet_wrap(~Edge)+ theme(legend.key.size = unit(1, 'cm'))
 ggsave(filename = "Syn_edges_final.eps", plot = last_plot(), device = "eps", path = NULL, scale = 1, width = 10, height = 7, dpi = 300)
 
 # Export the networks and taxonomy files to be analyzed in Cytoscape - we can observe the networks and estimate node degree
@@ -561,7 +579,7 @@ write.table(tax_800,"BATS-network-tax-800m.txt",sep="\t", quote=FALSE)
 tax_1000 <- as.data.frame(tax_table(filter_18S_1000), check.names=FALSE)
 write.table(tax_1000,"BATS-network-tax-1000m.txt",sep="\t", quote=FALSE)
 
-# Upload and plot Syndiniales and host node degree at each depth - Figure 2B and Figure SI 6
+# Upload and plot Syndiniales and host node degree at each depth - Figure 2B and Figure SI 7
 major_deg <- read.csv("major_degree.csv", header=T, row.names = NULL, check.names=F,fileEncoding="UTF-8-BOM") 
 major_deg$Network = as.factor(major_deg$Network)
 df1 <- major_deg %>% # Estimate the mean and SD for each depth and group
@@ -588,7 +606,7 @@ p +geom_bar(stat="identity",colour="black")+scale_y_continuous(expand = c(0, 0),
   scale_fill_manual(values=c("#8f7bf4","#332288"))+ylab("Network edges") + xlab("Depth (m)")+ theme_bw()+coord_flip()
 ggsave(filename = "Total_edges.eps", plot = last_plot(), device = "eps", path = NULL, scale = 1, width = 4.5, height = 5, dpi = 300)
 
-# Export the large network edges file (all edges and those connected to Syndiniales) - Dataset S2
+# Export the large network edges file (all edges and those connected to Syndiniales) - Table S3
 write_csv(df_all, "BATS-network-connections_all.csv") # All network edges
 write_csv(df_syn, "BATS-network-connections_syn.csv") # Edges involving Syndiniales and potential hosts
 
@@ -601,15 +619,16 @@ df<-df[complete.cases(df),]
 
 barplot_hosts = df
 barplot_hosts$Genus<- as.character(barplot_hosts$Genus)
-barplot_hosts$Genus[barplot_hosts$Freq < 3]= "AAOther" # Genus level groups that were connected to Syndiniales < 3 times were grouped into "Other" category
 barplot_hosts$Network <- str_remove(barplot_hosts$Network, pattern = "m") # Remove m from the depth values
 df_arthro <- subset(barplot_hosts, Class =="Arthropoda") # Subset to each respective class level group
 df_dino <- subset(barplot_hosts, Class =="Dinophyceae")
 df_acanth <- subset(barplot_hosts, Class =="Acantharea")
+df_poly <- subset(barplot_hosts, Class =="Polycystinea")
 df_rada <- subset(barplot_hosts, Class =="RAD-A")
 df_radb <- subset(barplot_hosts, Class =="RAD-B")
 
-# Plot genus level edges with Syndiniales for each group and depth - Figure SI 7
+# Plot genus level edges with Syndiniales for each group and depth - Figure SI 8
+df_arthro$Genus[df_arthro$Freq < 2]= "AAOthers" # Genus level groups that were connected to Syndiniales < 2 times were grouped into "Other" category
 p <- ggplot(data=df_arthro, aes(x=fct_rev(Network), y=Freq, fill=Genus))
 p$data$Network <- factor(p$data$Network, levels = c( "1", "40", "80","120","160","200","250","300","500","600","800","1000"))
 p + geom_bar(aes(), stat="identity", position="stack", width = 0.9)+
@@ -617,6 +636,51 @@ p + geom_bar(aes(), stat="identity", position="stack", width = 0.9)+
   theme(axis.text.x=element_text(angle=45,vjust =1, hjust=1)) + theme(legend.position="right") +  theme(text = element_text(size = 12))+
   guides(fill=guide_legend(nrow=13, ncol=1)) + coord_flip() +labs(y = "Edge frequency", x = "Depth (m)") 
 ggsave(filename = "Syn_genus_arthro.pdf", plot = last_plot(), device = "pdf", path = NULL, scale = 1, width = 6, height = 5, dpi = 300)
+
+df_dino$Genus[df_dino$Freq < 3]= "AAOthers" # Similar plot for Dinophyceae potential hosts
+p <- ggplot(data=df_dino, aes(x=fct_rev(Network), y=Freq, fill=Genus))
+p$data$Network <- factor(p$data$Network, levels = c( "1", "40", "80","120","160","200","250","300","500","600","800","1000"))
+p + geom_bar(aes(), stat="identity", position="stack", width = 0.9)+
+  scale_y_continuous(expand = c(0, 0),limits=c(0,50))+ geom_hline(yintercept=0) + theme_bw()+ scale_fill_manual(values=mycolors)+
+  theme(axis.text.x=element_text(angle=45,vjust =1, hjust=1)) + theme(legend.position="right") +  theme(text = element_text(size = 12))+
+  guides(fill=guide_legend(nrow=13, ncol=1)) + coord_flip() +labs(y = "Edge frequency", x = "Depth (m)") 
+ggsave(filename = "Syn_genus_dino.pdf", plot = last_plot(), device = "pdf", path = NULL, scale = 1, width = 6, height = 5, dpi = 300)
+
+df_acanth$Genus[df_acanth$Freq < 2]= "AAOthers" # Similar plot for Acantharea potential hosts
+p <- ggplot(data=df_acanth, aes(x=fct_rev(Network), y=Freq, fill=Genus))
+p$data$Network <- factor(p$data$Network, levels = c( "1", "40", "80","120","160","200","250","300","500","600","800","1000"))
+p + geom_bar(aes(), stat="identity", position="stack", width = 0.9)+
+  scale_y_continuous(expand = c(0, 0),limits=c(0,50))+ geom_hline(yintercept=0) + theme_bw()+ scale_fill_manual(values=mycolors)+
+  theme(axis.text.x=element_text(angle=45,vjust =1, hjust=1)) + theme(legend.position="right") +  theme(text = element_text(size = 12))+
+  guides(fill=guide_legend(nrow=13, ncol=1)) + coord_flip() +labs(y = "Edge frequency", x = "Depth (m)") 
+ggsave(filename = "Syn_genus_acanth.pdf", plot = last_plot(), device = "pdf", path = NULL, scale = 1, width = 6, height = 5, dpi = 300)
+
+df_poly$Genus[df_poly$Freq < 2]= "AAOthers" # Similar plot for Polycystinea potential hosts
+p <- ggplot(data=df_poly, aes(x=fct_rev(Network), y=Freq, fill=Genus))
+p$data$Network <- factor(p$data$Network, levels = c( "1", "40", "80","120","160","200","250","300","500","600","800","1000"))
+p + geom_bar(aes(), stat="identity", position="stack", width = 0.9)+
+  scale_y_continuous(expand = c(0, 0),limits=c(0,50))+ geom_hline(yintercept=0) + theme_bw()+ scale_fill_manual(values=mycolors)+
+  theme(axis.text.x=element_text(angle=45,vjust =1, hjust=1)) + theme(legend.position="right") +  theme(text = element_text(size = 12))+
+  guides(fill=guide_legend(nrow=13, ncol=1)) + coord_flip() +labs(y = "Edge frequency", x = "Depth (m)") 
+ggsave(filename = "Syn_genus_poly.pdf", plot = last_plot(), device = "pdf", path = NULL, scale = 1, width = 6, height = 5, dpi = 300)
+
+df_rada$Genus[df_rada$Freq < 2]= "AAOthers" # Similar plot for RAD-A potential hosts
+p <- ggplot(data=df_rada, aes(x=fct_rev(Network), y=Freq, fill=Genus))
+p$data$Network <- factor(p$data$Network, levels = c( "1", "40", "80","120","160","200","250","300","500","600","800","1000"))
+p + geom_bar(aes(), stat="identity", position="stack", width = 0.9)+
+  scale_y_continuous(expand = c(0, 0),limits=c(0,50))+ geom_hline(yintercept=0) + theme_bw()+ scale_fill_manual(values=mycolors)+
+  theme(axis.text.x=element_text(angle=45,vjust =1, hjust=1)) + theme(legend.position="right") +  theme(text = element_text(size = 12))+
+  guides(fill=guide_legend(nrow=13, ncol=1)) + coord_flip() +labs(y = "Edge frequency", x = "Depth (m)") 
+ggsave(filename = "Syn_genus_rada.pdf", plot = last_plot(), device = "pdf", path = NULL, scale = 1, width = 6, height = 5, dpi = 300)
+
+df_radb$Genus[df_radb$Freq < 4]= "AAOthers" # Similar plot for RAD-B potential hosts
+p <- ggplot(data=df_radb, aes(x=fct_rev(Network), y=Freq, fill=Genus))
+p$data$Network <- factor(p$data$Network, levels = c( "1", "40", "80","120","160","200","250","300","500","600","800","1000"))
+p + geom_bar(aes(), stat="identity", position="stack", width = 0.9)+
+  scale_y_continuous(expand = c(0, 0),limits=c(0,50))+ geom_hline(yintercept=0) + theme_bw()+ scale_fill_manual(values=mycolors)+
+  theme(axis.text.x=element_text(angle=45,vjust =1, hjust=1)) + theme(legend.position="right") +  theme(text = element_text(size = 12))+
+  guides(fill=guide_legend(nrow=13, ncol=1)) + coord_flip() +labs(y = "Edge frequency", x = "Depth (m)") 
+ggsave(filename = "Syn_genus_radb.pdf", plot = last_plot(), device = "pdf", path = NULL, scale = 1, width = 6, height = 5, dpi = 300)
 
 ### To prepare for mean POC flux vs. mean group abundance, subset taxonomic data from the photic zone
 photic <- x1[x1[["vert_bin"]]== "Photic", ]
@@ -630,7 +694,7 @@ mean.18S = photic %>% # Group by class and month (mean and SD)
 abund_18S <- subset(mean.18S, grepl("Syndiniales|Dinophyceae|Arthropoda", mean.18S$Class)) 
 write_csv(abund_18S, "BATS-vert-groups.csv") # Save file for mean group relative abundance in the photic zone
 
-# Import mean relative abundances and POC flux data (150 m) and plot Spearman correlation - Figure 3A
+# Import mean relative abundances and POC flux data (150 m) and plot Spearman correlation - Figure 3
 syn_export <- read.csv("Syn_export.csv", header=T, row.names = NULL, check.names=F,fileEncoding="UTF-8-BOM") 
 p <- ggscatter(syn_export, x = "C_avg", y = "Mean", cor.method = "spearman", cor.coef =T, size = 3, add.params = list(color = "black", fill = "darkgray"), add = "reg.line", conf.int = TRUE, ylab = "Integrated relative abundance <140 m (%)", xlab = "Carbon flux 150 m (mgC/m^2/day)")+
   geom_errorbar(data = syn_export, aes(ymin = Mean-sd, ymax = Mean+sd),width = 2)+ # Error bars based on average relative abundance and SD
@@ -641,7 +705,7 @@ p$data$Class <- factor(p$data$Class, levels =c("Syndiniales","Arthropoda","Dinop
 p
 ggsave(filename = "EXPORT_all.pdf", plot = last_plot(), device = "pdf", path = NULL, scale = 1, width = 12, height = 4, dpi = 300)
 
-# Merge phyloseq objects from the network to run an UpSet plot - overlap of Syndiniales presence-absence data with depth - Figure 3B
+# Merge phyloseq objects from the network to run an UpSet plot - overlap of Syndiniales presence-absence data with depth - Figure 4A
 ps_all = merge_phyloseq(filter_18S_surface,filter_18S_40,filter_18S_80,filter_18S_120,filter_18S_160,filter_18S_200,filter_18S_250,filter_18S_300,filter_18S_500,filter_18S_600,filter_18S_800,filter_18S_1000)
 ps_Syn_all =subset_taxa(ps_all, Class=="Syndiniales",Prune = T) # Subset to Syndiniales
 dataset <- phyloseq2meco(ps_Syn_all)
@@ -673,7 +737,7 @@ upset(otu,depth, width_ratio=0.1,min_size=1, sort_sets = FALSE,name = "Syndinial
 
 dev.off()
 
-# Read counts of two example Syndiniales ASVs over time and depth at BATS - Figure 3C
+# Read counts of two example Syndiniales ASVs over time and depth at BATS - Figure 4B
 ps_melt2 <- psmelt(ps_Syn_all) # Melt the data
 ps_melt3 <- subset(ps_melt2, OTU == "ASV9865" | OTU == "ASV2889") # Subset to two specific ASVs - chosen from the UpSet plot
 p <- ggplot(ps_melt3, aes(x=fct_rev(Nominal_Depth), y = factor(yyyymmdd),fill=vert_bin))
@@ -694,9 +758,9 @@ dataset$tax_table %<>% .[grepl("c__Arthropoda", .$Class), ] # Subset to Arthropo
 dataset$tax_table %<>% .[grepl("c__Dinophyceae", .$Class), ] # Subset to Dinophyceae
 dataset1 <- dataset$merge_samples(use_group = "vert_bin") # Partition based on vertical zones
 t1 <- trans_venn$new(dataset1, ratio = "numratio") # Apply venn diagram - move through different groups
-t1$plot_venn(color_circle = c(ap[12], ap[5], ap[8]),fill_color = TRUE,alpha=0.5) # Plot overlap
+t1$plot_venn(color_circle = c("#88CCEE","#CC6677"),fill_color = TRUE,alpha=0.5) # Plot overlap
 
-# Upload overlap data for each group and plot - Figure 3D
+# Upload overlap data for each group and plot - Figure 4C
 shared <- read.csv("shared_ASVs.csv", header=T, row.names = NULL, check.names=F,fileEncoding="UTF-8-BOM") 
 p <- ggplot(shared, aes(x=Group, y=as.numeric(Shared),fill=Group))
 p$data$Group <- factor(p$data$Group, levels = c("All euks","Syndiniales","Dinophyceae","Arthropoda"))
@@ -705,7 +769,7 @@ p + geom_col(width = 0.8, colour = "black", size = 0.9)  + theme_bw()+scale_fill
   theme(axis.text.x=element_text(angle=45,vjust=1, hjust=1, size=12, color="black"))+ theme(axis.text.y=element_text(size=12)) + theme(axis.title.y = element_text(size = 12))
 ggsave(filename = "shared_ASVs.pdf", plot = last_plot(), device = "pdf", path = NULL, scale = 1, width = 6, height = 5, dpi = 300)
 
-# UpSet plot to look at seasonal effects - Figure SI 8 
+# UpSet plot to look at seasonal effects - Figure SI 9
 dataset <- phyloseq2meco(ps_Syn_all)
 dataset1 <- dataset$merge_samples(use_group = "Season")
 otu <- as.data.frame(dataset1$otu_table)
@@ -733,9 +797,32 @@ p$data$Season <- as.factor(p$data$Season)
 p + theme_bw() + 
   scale_colour_manual(values=c("#DB5339", "#A5CFCC", "#F7CDA4", "#0E899F")) + scale_shape_manual(values = c(15:18))+
   geom_point(size=6) + theme(text = element_text(size=12)) 
-ggsave(filename = "Syn_PCoA_1m.eps", plot = last_plot(), device = "eps", path = NULL, scale = 1, width = 7, height = 5, dpi = 150)
+ggsave(filename = "Syn_PCoA_1m.eps", plot = last_plot(), device = "eps", path = NULL, scale = 1, width = 7, height = 5, dpi = 300)
 
 # PERMANOVA at different depths - temporal component
 metadata <- as(sample_data(depth), "data.frame")
-adonis2(phyloseq::distance(depth, method="bray") ~ Season, data = metadata)
+metadata$Season=as.factor(metadata$Season)
+adonis2(phyloseq::distance(depth, method="bray") ~ Season, data = metadata,perm=9999)
 
+# Re-run taxonomic bar plots of the whole community and Syndiniales only filtered to the top 150 ASVs from each depth used in network analysis 
+# Plot the full community used in the networks - Figure SI 6
+dataset <- phyloseq2meco(ps_all) # Convert to microeco object
+dataset1 <- dataset$merge_samples(use_group = "Nominal_Depth") # Group the data by depth
+t1 <- trans_abund$new(dataset = dataset1, taxrank = "Class", ntaxa = 10) # Create an abundance object with the top 10 class level 18S groups
+t1$data_taxanames <- c("Syndiniales", "Dinophyceae", "Polycystinea","Arthropoda", 
+                       "Acantharea", "RAD-B","Cnidaria","RAD-A","Sagenista","Prymnesiophyceae")
+g1 <- t1$plot_bar(bar_type = "full", use_alluvium = FALSE, clustering = FALSE,barwidth = NULL, xtext_size = 12, color_values = c("#332288","#CC6677","#DDCC77","#117733","#88CCEE", "#882255", "#44AA99", "#999933","#AA4499" , "#EB7357"),others_color = "#757575",
+                  order_x = c("1000", "800", "600", "500", "300", "250", "200","160","120","80","40","1"))
+g1 + coord_flip() + geom_col(colour = "black") + labs(x="Depth (m)",y="Relative abundance (%)")+theme(text = element_text(size = 12))
+ggsave(filename = "syn_stacked_class_network.eps", plot = last_plot(), device = "eps", path = NULL, scale = 1, width = 5, height = 5, dpi = 300)
+
+# Plot Syndiniales used in the networks - Figure SI 6
+dataset <- phyloseq2meco(ps_Syn_all) # Convert to microeco object
+dataset1 <- dataset$merge_samples(use_group = "Nominal_Depth") # Group the data by depth
+t1 <- trans_abund$new(dataset = dataset1, taxrank = "Family", ntaxa = 10) 
+t1$data_taxanames <- c("Dino-Group-II-Clade-7", "Dino-Group-II-Clade-6", "Dino-Group-II-Clade-10-and-11","Dino-Group-I-Clade-1", 
+                       "Dino-Group-I-Clade-5", "Dino-Group-I-Clade-2","Dino-Group-II_X","Dino-Group-I-Clade-4","Dino-Group-I_X","Dino-Group-II-Clade-22")
+g1 <- t1$plot_bar(bar_type = "full", use_alluvium =FALSE, clustering = FALSE,barwidth = NULL, xtext_size = 12, color_values = c("#4477AA","#EE6677","#228833", "#CCBB44", "#66CCEE", "#AA3377", "#EE7733","#CC3311","#009988","#EE3377"),others_color = "#757575",
+                  order_x = c("1000", "800", "600", "500", "300", "250", "200","160","120","80","40","1"))
+g1 + coord_flip()+geom_col(colour = "black")+ labs(x="Depth (m)",y="Relative abundance (%)")+theme(text = element_text(size = 12))
+ggsave(filename = "syn_stacked_family_network.eps", plot = last_plot(), device = "eps", path = NULL, scale = 1, width = 5.5, height = 5, dpi = 300)
