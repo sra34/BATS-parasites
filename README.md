@@ -7,6 +7,11 @@ This repository has QIIME 2 compatible files, metadata tables, network files (Cy
 
 * [Preprint](https://www.biorxiv.org/content/10.1101/2023.06.29.547083v1)
 
+Update -- Manuscript is now published online at ISME Communications with a new title (same author list):
+**The role of Syndiniales parasites in depth-specific networks and carbon flux in the oligotrophic ocean**<br/>
+
+* [Final manuscript](https://academic.oup.com/ismecommun/advance-article/doi/10.1093/ismeco/ycae014/7585943?searchresult=1)
+
 ### 1. Study description 
 Protist parasites occupy important roles in marine food webs, influencing host diversity, species succession, and the turnover of organic matter. The marine alveolate group, Syndiniales, are the most diverse and widespread protist parasites in the ocean. Syndiniales have been found in virtually all marine habitats, from surface to deep waters, coastal to offshore, and even in extreme habitats (sediments, oxygen minimum zones, and hydrothermal vents). Yet, their infection dynamics and links with carbon export remain unclear. In this study, we examined a 4-year 18S rRNA metabarcoding dataset from the Bermuda Atlantic Time-series Study (BATS) site in the Sargasso Sea, which included monthly DNA samples collected at twelve depths (1-1000 m). We constructed twelve networks, one for each discrete depth, to observed relationships between Syndiniales and potential hosts. We also leveraged environmental data and POC flux measurements that were collected from the same site. POC flux data were correlated with Syndiniales to provide in situ context for their role in carbon export in marine ecosystems. 
 
